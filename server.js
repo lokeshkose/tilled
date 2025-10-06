@@ -205,7 +205,7 @@ function verifyTilledWebhook(req, tolerance = 5 * 60) {
 }
 
 // Webhook endpoint
-app.post('/webhook/merchant/status', async (req, res) => {
+app.post('/tilled/webhook/merchant/status', async (req, res) => {
   try {
     console.log(
       req.header,
