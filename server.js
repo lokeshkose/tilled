@@ -258,7 +258,7 @@ app.post('/tilled/webhook/merchant/status', async (req, res) => {
  * POST /create-payment-intent
  * Body: { payment_method_id, amount, currency }
  */
-app.post('/create-payment-intent', async (req, res) => {
+app.post('/tilled/create-payment-intent', async (req, res) => {
   const {
     payment_method_id,
     amount,
