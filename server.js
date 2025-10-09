@@ -13,6 +13,9 @@ app.use(express.json()); // Parses JSON request bodies
 const MONGO_URI = process.env.MONGO_URI || 'mongodb://localhost:27017/tilleddb';
 const PORT = process.env.PORT || 10000;
 const crypto = require('crypto');
+const TILLED_SECRET_KEY =
+  'sk_OizrUDeyfqpGoa0rhOjOgfn8mq97e3bdRMFDeLG1ZT0embtHQGpwRq3Sas6msFs4VhiqWH3odQ1vyt5gzhc05rS889bs0s55HkQm';
+const TILLED_ACCOUNT_ID = 'acct_yQNt8gFvN1UxOMxJ3mc1L';
 
 // Replace with your Tilled webhook secret
 const TILLED_WEBHOOK_SECRET = 'whsec_qiOUGoq5JwBBOp1UmL4iuOV2uIH6rJjc';
@@ -160,7 +163,8 @@ function parseHeader(header, scheme) {
   if (typeof header !== 'string') return null;
 
   return header.split(',').reduce(
-    (accum, item) => {acct_yQNt8gFvN1UxOMxJ3mc1L
+    (accum, item) => {
+      acct_yQNt8gFvN1UxOMxJ3mc1L;
       const kv = item.split('=');
       if (kv[0] === 't') accum.timestamp = kv[1];
       if (kv[0] === scheme) accum.signature = kv[1];
@@ -247,6 +251,65 @@ app.post('/tilled/webhook/merchant/status', async (req, res) => {
   } catch (err) {
     console.error('Webhook error:', err);
     res.status(500).json({ success: false, message: 'Server error' });
+  }
+});
+
+/**
+ * POST /create-payment-intent
+ * Body: { payment_method_id, amount, currency }
+ */
+app.post('/create-payment-intent', async (req, res) => {
+  const {
+    payment_method_id,
+    amount,
+    currency = 'usd',
+    paymentMethod,
+  } = req.body;
+
+  if (!payment_method_id) {
+    return res
+      .status(400)
+      .json({ success: false, error: 'Missing required parameters' });
+  }
+
+  try {
+    const response = await fetch(
+      'https://sandbox-api.tilled.com/v1/payment-intents',
+      {
+        method: 'POST',
+        headers: {
+          'Tilled-Api-Key':
+            'sk_OizrUDeyfqpGoa0rhOjOgfn8mq97e3bdRMFDeLG1ZT0embtHQGpwRq3Sas6msFs4VhiqWH3odQ1vyt5gzhc05rS889bs0s55HkQm',
+          'Content-Type': 'application/json',
+          'Tilled-Account': 'acct_yQNt8gFvN1UxOMxJ3mc1L',
+        },
+        body: JSON.stringify({
+          amount,
+          currency,
+          payment_method_id,
+          // confirm: true,
+          platform_fee_amount: 100,
+          payment_method_types: [paymentMethod],
+          metadata: {
+            tenantId: 'development',
+          },
+        }),
+      }
+    );
+
+    const data = await response.json();
+    console.log(data, '=============data=============');
+    const transactions = db.collection('transactions');
+    await transactions.insertOne(data);
+
+    if (!response.ok) {
+      return res.status(response.status).json({ success: false, error: data });
+    }
+
+    res.json({ success: true, paymentIntent: data });
+  } catch (err) {
+    console.error('Tilled API error:', err);
+    res.status(500).json({ success: false, error: err.message });
   }
 });
 
