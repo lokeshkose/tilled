@@ -21,6 +21,7 @@ const TILLED_ACCOUNT_ID = 'acct_yQNt8gFvN1UxOMxJ3mc1L';
 const TILLED_WEBHOOK_SECRET = 'whsec_qiOUGoq5JwBBOp1UmL4iuOV2uIH6rJjc';
 
 let tilledCollection;
+let transactionsCollections;
 
 // ✅ Connect to MongoDB
 async function connectToDB() {
@@ -29,6 +30,7 @@ async function connectToDB() {
     await client.connect();
     const db = client.db(); // uses default db from URI
     tilledCollection = db.collection('tilled_details');
+    transactionsCollections = db.collection('transactions');
 
     // Create unique compound index for duplicate checking
     await tilledCollection.createIndex(
@@ -299,8 +301,8 @@ app.post('/tilled/create-payment-intent', async (req, res) => {
 
     const data = await response.json();
     console.log(data, '=============data=============');
-    const transactions = db.collection('transactions');
-    await transactions.insertOne(data);
+    // const transactions = db.collection('transactions');
+    await transactionsCollections.insertOne(data);
 
     if (!response.ok) {
       return res.status(response.status).json({ success: false, error: data });
