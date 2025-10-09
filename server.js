@@ -266,7 +266,7 @@ app.post('/tilled/create-payment-intent', async (req, res) => {
     paymentMethod,
   } = req.body;
 
-  if (!payment_method_id) {
+  if (!amount) {
     return res
       .status(400)
       .json({ success: false, error: 'Missing required parameters' });
