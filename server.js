@@ -18,7 +18,7 @@ const TILLED_SECRET_KEY =
 const TILLED_ACCOUNT_ID = 'acct_yQNt8gFvN1UxOMxJ3mc1L';
 
 // Replace with your Tilled webhook secret
-const TILLED_WEBHOOK_SECRET = 'whsec_qiOUGoq5JwBBOp1UmL4iuOV2uIH6rJjc';
+// const TILLED_WEBHOOK_SECRET = 'whsec_qiOUGoq5JwBBOp1UmL4iuOV2uIH6rJjc';
 
 let tilledCollection;
 let transactionsCollections;
@@ -177,7 +177,7 @@ function parseHeader(header, scheme) {
 }
 
 // Verify Tilled webhook
-function verifyTilledWebhook(req, tolerance = 5 * 60) {
+function verifyTilledWebhook(req, webhookSecret, tolerance = 5 * 60) {
   // tolerance in seconds (default 5 min)
   const tilledSignature = req.headers['tilled-signature'];
   if (!tilledSignature) return false;
@@ -199,7 +199,7 @@ function verifyTilledWebhook(req, tolerance = 5 * 60) {
 
   // Compute HMAC SHA256
   const expectedSignature = crypto
-    .createHmac('sha256', TILLED_WEBHOOK_SECRET)
+    .createHmac('sha256', webhookSecret)
     .update(payload)
     .digest('hex');
 
@@ -217,7 +217,8 @@ app.post('/tilled/webhook/merchant/status', async (req, res) => {
       req.header,
       '==========================Webhook Header============================'
     );
-    if (!verifyTilledWebhook(req)) {
+    const TILLED_WEBHOOK_SECRET = 'whsec_qiOUGoq5JwBBOp1UmL4iuOV2uIH6rJjc';
+    if (!verifyTilledWebhook(req, TILLED_WEBHOOK_SECRET)) {
       console.warn('Webhook signature verification failed!');
       return res
         .status(401)
@@ -250,6 +251,52 @@ app.post('/tilled/webhook/merchant/status', async (req, res) => {
     console.log(`Merchant updated: status=${status}, accountId=${id}`);
 
     res.status(200).json({ success: true, data: updatedDoc.value });
+  } catch (err) {
+    console.error('Webhook error:', err);
+    res.status(500).json({ success: false, message: 'Server error' });
+  }
+});
+
+app.post('/tilled/webhook/payment_intent', async (req, res) => {
+  try {
+    console.log(
+      req.header,
+      '==========================Webhook Header============================'
+    );
+    const TILLED_WEBHOOK_SECRET = 'whsec_k1dtxzwgyDDk9UtXhkW9oG0PiDYPHDMz';
+    if (!verifyTilledWebhook(req, TILLED_WEBHOOK_SECRET)) {
+      console.warn('Webhook signature verification failed!');
+      return res
+        .status(401)
+        .json({ success: false, message: 'Unauthorized webhook' });
+    }
+
+    const {
+      data: { status, id },
+    } = req.body;
+
+    console.log(
+      '============================================Payment Intent Webhook====================================',
+      req.body
+    );
+
+    // if (!id) {
+    //   return res.status(400).json({
+    //     success: false,
+    //     message: 'Missing id in webhook payload',
+    //   });
+    // }
+
+    // // Find and update merchant in MongoDB
+    // const updatedDoc = await tilledCollection.findOneAndUpdate(
+    //   { id },
+    //   { $set: { status, updatedAt: new Date() } },
+    //   { returnDocument: 'after' }
+    // );
+
+    // console.log(`Merchant updated: status=${status}, accountId=${id}`);
+
+    res.status(200).json({ success: true });
   } catch (err) {
     console.error('Webhook error:', err);
     res.status(500).json({ success: false, message: 'Server error' });
@@ -321,3 +368,7 @@ connectToDB().then(() => {
     console.log(`🚀 Server running on http://localhost:${PORT}`);
   });
 });
+
+// development-ec.enterprisehub.io/tilled/webhook/payment_intent
+
+// whsec_k1dtxzwgyDDk9UtXhkW9oG0PiDYPHDMz
