@@ -166,7 +166,7 @@ function parseHeader(header, scheme) {
 
   return header.split(',').reduce(
     (accum, item) => {
-      acct_yQNt8gFvN1UxOMxJ3mc1L;
+      // acct_yQNt8gFvN1UxOMxJ3mc1L;
       const kv = item.split('=');
       if (kv[0] === 't') accum.timestamp = kv[1];
       if (kv[0] === scheme) accum.signature = kv[1];
