@@ -2,6 +2,8 @@
 const express = require('express');
 const cors = require('cors');
 const { MongoClient, ObjectId } = require('mongodb');
+const axios = require('axios');
+
 
 const app = express();
 
@@ -35,7 +37,7 @@ async function connectToDB() {
     // Create unique compound index for duplicate checking
     await tilledCollection.createIndex(
       { tenantId: 1, email: 1 },
-      { unique: true, name: 'unique_tenant_email' }
+      { unique: true, name: 'unique_tenant_email' },
     );
 
     console.log('✅ Connected to MongoDB');
@@ -172,7 +174,7 @@ function parseHeader(header, scheme) {
       if (kv[0] === scheme) accum.signature = kv[1];
       return accum;
     },
-    { timestamp: -1, signature: -1 }
+    { timestamp: -1, signature: -1 },
   );
 }
 
@@ -206,7 +208,7 @@ function verifyTilledWebhook(req, webhookSecret, tolerance = 5 * 60) {
   // Constant-time comparison
   return crypto.timingSafeEqual(
     Buffer.from(expectedSignature, 'hex'),
-    Buffer.from(details.signature, 'hex')
+    Buffer.from(details.signature, 'hex'),
   );
 }
 
@@ -215,7 +217,7 @@ app.post('/tilled/webhook/merchant/status', async (req, res) => {
   try {
     console.log(
       req.header,
-      '==========================Webhook Header============================'
+      '==========================Webhook Header============================',
     );
     const TILLED_WEBHOOK_SECRET = 'whsec_qiOUGoq5JwBBOp1UmL4iuOV2uIH6rJjc';
     if (!verifyTilledWebhook(req, TILLED_WEBHOOK_SECRET)) {
@@ -231,7 +233,7 @@ app.post('/tilled/webhook/merchant/status', async (req, res) => {
 
     console.log(
       '============================================Webhook Body========================',
-      req.body
+      req.body,
     );
 
     if (!id) {
@@ -245,7 +247,7 @@ app.post('/tilled/webhook/merchant/status', async (req, res) => {
     const updatedDoc = await tilledCollection.findOneAndUpdate(
       { id },
       { $set: { status, updatedAt: new Date() } },
-      { returnDocument: 'after' }
+      { returnDocument: 'after' },
     );
 
     console.log(`Merchant updated: status=${status}, accountId=${id}`);
@@ -261,7 +263,7 @@ app.post('/tilled/webhook/payment_intent', async (req, res) => {
   try {
     console.log(
       req.header,
-      '==========================Webhook Header============================'
+      '==========================Webhook Header============================',
     );
     const TILLED_WEBHOOK_SECRET = 'whsec_k1dtxzwgyDDk9UtXhkW9oG0PiDYPHDMz';
     if (!verifyTilledWebhook(req, TILLED_WEBHOOK_SECRET)) {
@@ -277,7 +279,7 @@ app.post('/tilled/webhook/payment_intent', async (req, res) => {
 
     console.log(
       '============================================Payment Intent Webhook====================================',
-      req.body
+      req.body,
     );
 
     // if (!id) {
@@ -343,7 +345,7 @@ app.post('/tilled/create-payment-intent', async (req, res) => {
             tenantId: 'development',
           },
         }),
-      }
+      },
     );
 
     const data = await response.json();
@@ -362,11 +364,225 @@ app.post('/tilled/create-payment-intent', async (req, res) => {
   }
 });
 
+// Create a Checkout Session
+app.post('/tilled/create-checkout-session', async (req, res) => {
+  try {
+    const {
+      amount,
+      currency = 'usd',
+      cancel_url,
+      success_url,
+      customer_email,
+      customer_id,
+      line_items,
+      metadata,
+    } = req.body;
+
+    if (!amount || !line_items) {
+      return res.status(400).json({
+        success: false,
+        error:
+          'Missing required parameters: amount and line_items are required',
+      });
+    }
+
+    const response = await fetch(
+      'https://sandbox-api.tilled.com/v1/checkout/sessions',
+      {
+        method: 'POST',
+        headers: {
+          'Tilled-Api-Key': process.env.TILLED_SECRET_KEY, // use env var
+          'Tilled-Account': process.env.TILLED_ACCOUNT_ID, // acct_xxx
+          'Content-Type': 'application/json',
+        },
+        body: JSON.stringify({
+          cancel_url: cancel_url || 'https://yourdomain.com/cancel',
+          success_url: success_url || 'https://yourdomain.com/success',
+          customer_email,
+          customer_id,
+          line_items: line_items || [
+            {
+              name: 'Sample Product',
+              amount: amount, // in cents
+              currency: currency,
+              quantity: 1,
+            },
+          ],
+          metadata: metadata || { order_id: '12345' },
+          payment_intent_data: {
+            capture_method: 'automatic', // could also be 'manual'
+            statement_descriptor: 'Your Business',
+          },
+        }),
+      },
+    );
+
+    const data = await response.json();
+    console.log('Checkout Session Created:', data);
+
+    if (!response.ok) {
+      return res.status(response.status).json({ success: false, error: data });
+    }
+
+    res.json({ success: true, session: data });
+  } catch (err) {
+    console.error('Error creating checkout session:', err);
+    res.status(500).json({ success: false, error: err.message });
+  }
+});
+
+// ================= UPS CONFIG =================
+
+const UPS_CLIENT_ID = 'bsxaAsLLPSY0xPQnckJKU0QtRefs0aXXGfxDI9B9G5rbJuWG';
+const UPS_CLIENT_SECRET =
+  'I2oqmOMGG4T0MP680JxClRUB4ER5FcytrpFMyNxDdU81zlOKfqzlLPrNRvTwThCj';
+
+// Sandbox
+const UPS_BASE_URL = 'https://wwwcie.ups.com';
+
+let upsTokenCache = {
+  token: null,
+  expiresAt: 0,
+};
+
+async function getUPSToken() {
+  try {
+    const now = Date.now();
+
+    // Return cached token if still valid
+    if (upsTokenCache.token && upsTokenCache.expiresAt > now) {
+      return upsTokenCache.token;
+    }
+
+    const auth = Buffer.from(`${UPS_CLIENT_ID}:${UPS_CLIENT_SECRET}`).toString(
+      'base64',
+    );
+
+    // Match original curl body
+    const body = new URLSearchParams({
+      client_id: UPS_CLIENT_ID,
+      client_secret: UPS_CLIENT_SECRET,
+      grant_type: 'client_credentials',
+    }).toString();
+
+    const response = await axios.post(
+      `${UPS_BASE_URL}/security/v1/oauth/token`,
+      body,
+      {
+        headers: {
+          Authorization: `Basic ${auth}`,
+          'Content-Type': 'application/x-www-form-urlencoded;charset=UTF-8',
+          Accept: '*/*',
+        },
+        timeout: 15000,
+      },
+    );
+
+    const { access_token, expires_in } = response.data;
+
+    if (!access_token) {
+      throw new Error('UPS OAuth did not return access_token');
+    }
+
+    // Cache token (subtract 60s safety buffer)
+    upsTokenCache = {
+      token: access_token,
+      expiresAt: now + (expires_in - 60) * 1000,
+    };
+
+    console.log('✅ UPS token refreshed', access_token);
+
+    return access_token;
+  } catch (err) {
+    console.error('❌ UPS OAuth Error:', err.response?.data || err.message);
+    throw err;
+  }
+}
+
+// ================= UPS SHIPPER ACCOUNT =================
+
+app.post('/ups/profile', async (req, res) => {
+  try {
+    const tenantId = req.headers['x-customer-context'];
+
+    if (!tenantId) {
+      return res.status(400).json({
+        success: false,
+        message: 'Missing X-Customer-Context',
+      });
+    }
+
+    const token = await getUPSToken();
+
+    const response = await axios.post(
+      `${UPS_BASE_URL}/customers/v1/register`,
+      req.body,
+      {
+        headers: {
+          Authorization: `Bearer ${token}`,
+          'X-Customer-Context': tenantId,
+          'Content-Type': 'application/json',
+        },
+      },
+    );
+
+    console.log('UPS Profile Response:', response.data);
+
+    res.json({ success: true, data: response.data });
+  } catch (err) {
+    console.error('UPS Profile Error:', err);
+    console.error('UPS Profile Error:', err.response?.data || err.message);
+
+    res.status(500).json({
+      success: false,
+      error: err.response?.data || err.message,
+    });
+  }
+});
+
+app.post('/ups/shipper-account', async (req, res) => {
+  try {
+    const tenantId = req.headers['x-customer-context'];
+
+    if (!tenantId) {
+      return res.status(400).json({
+        success: false,
+        message: 'Missing X-Customer-Context',
+      });
+    }
+
+    const token = await getUPSToken();
+
+    const response = await axios.post(
+      `${UPS_BASE_URL}/api/customers/v1/account`,
+      req.body,
+      {
+        headers: {
+          Authorization: `Bearer ${token}`,
+          'X-Customer-Context': tenantId,
+          'Content-Type': 'application/json',
+        },
+      },
+    );
+
+    console.log('UPS Account Response:', response.data);
+
+    res.json({ success: true, data: response.data });
+  } catch (err) {
+    console.error('UPS Account Error:', err);
+
+    res.status(500).json({
+      success: false,
+      error: err.response?.data || err.message,
+    });
+  }
+});
+
 // ✅ Start server after DB connects
-connectToDB().then(() => {
-  app.listen(PORT, () => {
-    console.log(`🚀 Server running on http://localhost:${PORT}`);
-  });
+// connectToDB().then(() => {
+// });
+app.listen(PORT, () => {
+  console.log(`🚀 Server running on http://localhost:${PORT}`);
 });
 
 // development-ec.enterprisehub.io/tilled/webhook/payment_intent
