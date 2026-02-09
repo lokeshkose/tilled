@@ -4,7 +4,6 @@ const cors = require('cors');
 const { MongoClient, ObjectId } = require('mongodb');
 const axios = require('axios');
 
-
 const app = express();
 
 // ✅ Middleware
@@ -24,6 +23,7 @@ const TILLED_ACCOUNT_ID = 'acct_yQNt8gFvN1UxOMxJ3mc1L';
 
 let tilledCollection;
 let transactionsCollections;
+let upsCollection;
 
 // ✅ Connect to MongoDB
 async function connectToDB() {
@@ -33,6 +33,7 @@ async function connectToDB() {
     const db = client.db(); // uses default db from URI
     tilledCollection = db.collection('tilled_details');
     transactionsCollections = db.collection('transactions');
+    upsCollection = db.collection('ups');
 
     // Create unique compound index for duplicate checking
     await tilledCollection.createIndex(
@@ -525,7 +526,7 @@ app.post('/ups/profile', async (req, res) => {
         },
       },
     );
-
+    const result = await upsCollection.insertOne(response.data);
     console.log('UPS Profile Response:', response.data);
 
     res.json({ success: true, data: response.data });
@@ -566,6 +567,7 @@ app.post('/ups/shipper-account', async (req, res) => {
     );
 
     console.log('UPS Account Response:', response.data);
+    const result = await upsCollection.insertOne(response.data);
 
     res.json({ success: true, data: response.data });
   } catch (err) {
@@ -579,10 +581,10 @@ app.post('/ups/shipper-account', async (req, res) => {
 });
 
 // ✅ Start server after DB connects
-// connectToDB().then(() => {
-// });
-app.listen(PORT, () => {
-  console.log(`🚀 Server running on http://localhost:${PORT}`);
+connectToDB().then(() => {
+  app.listen(PORT, () => {
+    console.log(`🚀 Server running on http://localhost:${PORT}`);
+  });
 });
 
 // development-ec.enterprisehub.io/tilled/webhook/payment_intent
