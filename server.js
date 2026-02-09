@@ -502,7 +502,7 @@ async function getUPSToken() {
 
 // ================= UPS SHIPPER ACCOUNT =================
 
-app.post('/ups/profile', async (req, res) => {
+app.post('/tilled/ups/profile', async (req, res) => {
   try {
     const tenantId = req.headers['x-customer-context'];
 
@@ -541,7 +541,7 @@ app.post('/ups/profile', async (req, res) => {
   }
 });
 
-app.post('/ups/shipper-account', async (req, res) => {
+app.post('/tilled/ups/shipper-account', async (req, res) => {
   try {
     const tenantId = req.headers['x-customer-context'];
 
