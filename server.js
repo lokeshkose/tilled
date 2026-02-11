@@ -567,7 +567,7 @@ app.post('/tilled/ups/shipper-account', async (req, res) => {
     );
 
     console.log('UPS Account Response:', response.data);
-    const result = await upsCollection.insertOne(response.data);
+    const result = await upsCollection.insertOne({ tenantId, ...response.data });
 
     res.json({ success: true, data: response.data });
   } catch (err) {
