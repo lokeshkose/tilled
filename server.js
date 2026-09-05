@@ -15,8 +15,10 @@ const MONGO_URI = process.env.MONGO_URI || 'mongodb://localhost:27017/tilleddb';
 const PORT = process.env.PORT || 10000;
 const crypto = require('crypto');
 const TILLED_SECRET_KEY =
-  'sk_OizrUDeyfqpGoa0rhOjOgfn8mq97e3bdRMFDeLG1ZT0embtHQGpwRq3Sas6msFs4VhiqWH3odQ1vyt5gzhc05rS889bs0s55HkQm';
+  'sk_1iEtBcsIh3yRPc7VU47IDJeGy2vsg0WWRAvqTELZZrl7AVho73OExuccNi7465yym3chg4nc96WQDoXeSgaKOCB82sgyepH5THLq';
 const TILLED_ACCOUNT_ID = 'acct_yQNt8gFvN1UxOMxJ3mc1L';
+const TILLED_PUBLISHABLE_KEY = 'pk_mGRIwjwgR3H14pI4bnF6E62xAjDJWcLEdSZpnGZAozUAklrFrbyDc41DMaY4caa0K3hdHuODCroX7YWH7fHLWby0rVfafiFLenKy'
+const TILLED_API_URL = 'https://sandbox-api.tilled.com';
 
 // Replace with your Tilled webhook secret
 // const TILLED_WEBHOOK_SECRET = 'whsec_qiOUGoq5JwBBOp1UmL4iuOV2uIH6rJjc';
@@ -142,6 +144,18 @@ app.get('/tilled', async (req, res) => {
     console.error(err);
     res.status(500).json({ success: false, message: 'Server error' });
   }
+});
+
+// ✅ GET /tilled/config — public config for initializing Tilled.js on the client
+app.get('/tilled/config', (req, res) => {
+  res.json({
+    success: true,
+    data: {
+      accountId: TILLED_ACCOUNT_ID,
+      publishableKey: TILLED_PUBLISHABLE_KEY || null,
+      apiUrl: TILLED_API_URL,
+    },
+  });
 });
 
 // ✅ GET /tilled/:id — fetch one by id
@@ -315,7 +329,7 @@ app.post('/tilled/create-payment-intent', async (req, res) => {
     payment_method_id,
     amount,
     currency = 'usd',
-    paymentMethod,
+    paymentMethod = 'card',
   } = req.body;
 
   if (!amount) {
@@ -326,14 +340,14 @@ app.post('/tilled/create-payment-intent', async (req, res) => {
 
   try {
     const response = await fetch(
-      'https://sandbox-api.tilled.com/v1/payment-intents',
+      `${TILLED_API_URL}/v1/payment-intents`,
       {
         method: 'POST',
         headers: {
           'Tilled-Api-Key':
-            'sk_OizrUDeyfqpGoa0rhOjOgfn8mq97e3bdRMFDeLG1ZT0embtHQGpwRq3Sas6msFs4VhiqWH3odQ1vyt5gzhc05rS889bs0s55HkQm',
+            TILLED_SECRET_KEY,
           'Content-Type': 'application/json',
-          'Tilled-Account': 'acct_yQNt8gFvN1UxOMxJ3mc1L',
+          'Tilled-Account': TILLED_ACCOUNT_ID,
         },
         body: JSON.stringify({
           amount,
@@ -358,7 +372,12 @@ app.post('/tilled/create-payment-intent', async (req, res) => {
       return res.status(response.status).json({ success: false, error: data });
     }
 
-    res.json({ success: true, paymentIntent: data });
+    res.json({
+      success: true,
+      paymentIntent: data,
+      clientSecret: data.client_secret,
+      paymentIntentId: data.id,
+    });
   } catch (err) {
     console.error('Tilled API error:', err);
     res.status(500).json({ success: false, error: err.message });
@@ -388,7 +407,7 @@ app.post('/tilled/create-checkout-session', async (req, res) => {
     }
 
     const response = await fetch(
-      'https://sandbox-api.tilled.com/v1/checkout/sessions',
+      `${TILLED_API_URL}/v1/checkout/sessions`,
       {
         method: 'POST',
         headers: {
@@ -428,6 +447,91 @@ app.post('/tilled/create-checkout-session', async (req, res) => {
     res.json({ success: true, session: data });
   } catch (err) {
     console.error('Error creating checkout session:', err);
+    res.status(500).json({ success: false, error: err.message });
+  }
+});
+
+// ✅ GET /tilled/domain/verify-payment — check a payment intent's status
+app.get('/tilled/domain/verify-payment', async (req, res) => {
+  const { paymentIntentId, domain } = req.query;
+
+  if (!paymentIntentId || !domain) {
+    return res.status(400).json({
+      success: false,
+      error: 'Missing required parameters: paymentIntentId and domain',
+    });
+  }
+
+  try {
+    const response = await fetch(
+      `${TILLED_API_URL}/v1/payment-intents/${paymentIntentId}`,
+      {
+        method: 'GET',
+        headers: {
+          'Tilled-Api-Key': TILLED_SECRET_KEY,
+          'Tilled-Account': TILLED_ACCOUNT_ID,
+          'Content-Type': 'application/json',
+        },
+      },
+    );
+
+    const data = await response.json();
+
+    if (!response.ok) {
+      return res.status(response.status).json({ success: false, error: data });
+    }
+
+    const paid = data.status === 'succeeded' || data.status === 'processing';
+
+    res.json({
+      success: true,
+      paid,
+      status: data.status,
+      domain,
+      paymentIntent: data,
+    });
+  } catch (err) {
+    console.error('Tilled verify-payment error:', err);
+    res.status(500).json({ success: false, error: err.message });
+  }
+});
+
+// Used to reverse a domain payment when the GoDaddy registration that
+// followed it failed, so the customer is not charged for a domain they
+// never received.
+app.post('/tilled/domain/refund', async (req, res) => {
+  const { paymentIntentId, reason } = req.body;
+
+  if (!paymentIntentId) {
+    return res.status(400).json({
+      success: false,
+      error: 'Missing required parameter: paymentIntentId',
+    });
+  }
+
+  try {
+    const response = await fetch(`${TILLED_API_URL}/v1/refunds`, {
+      method: 'POST',
+      headers: {
+        'Tilled-Api-Key': TILLED_SECRET_KEY,
+        'Tilled-Account': TILLED_ACCOUNT_ID,
+        'Content-Type': 'application/json',
+      },
+      body: JSON.stringify({
+        payment_intent_id: paymentIntentId,
+        reason: reason || 'requested_by_customer',
+      }),
+    });
+
+    const data = await response.json();
+
+    if (!response.ok) {
+      return res.status(response.status).json({ success: false, error: data });
+    }
+
+    res.json({ success: true, refund: data });
+  } catch (err) {
+    console.error('Tilled refund error:', err);
     res.status(500).json({ success: false, error: err.message });
   }
 });
